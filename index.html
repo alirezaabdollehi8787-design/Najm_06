@@ -5,18 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>سامانه نجم</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script type="module">
-  // ════════════════════════════════════════
-  //  FIREBASE — جایگزین کن با کلید خودت
-  // ════════════════════════════════════════
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import {
-    getFirestore, doc, getDoc, setDoc, onSnapshot
-  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-  // ════════════════════════════════════════
-  //  FIREBASE CONFIG
-  // ════════════════════════════════════════
+<!-- Firebase CDN (compat version - works in all browsers without module bundler) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
   const firebaseConfig = {
     apiKey: "AIzaSyCvcGijAb7B-VJrGczlds4fyLUwSP6WmfQ",
     authDomain: "najm06-49558.firebaseapp.com",
@@ -27,24 +19,29 @@
     measurementId: "G-NBFW41CZ1R"
   };
 
-  const fbApp = initializeApp(firebaseConfig);
-  const db = getFirestore(fbApp);
-  const DOC_REF = doc(db, "najm", "data"); // یک سند واحد برای کل داده‌های سامانه
+  try {
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const DOC_REF = db.collection("najm").doc("data");
 
-  // این توابع را در window می‌گذاریم تا کد اصلی پایین صفحه بتواند صدا بزند
-  window.fbGetData = async function() {
-    const snap = await getDoc(DOC_REF);
-    return snap.exists() ? snap.data() : null;
-  };
-  window.fbSaveData = async function(data) {
-    await setDoc(DOC_REF, data);
-  };
-  window.fbListen = function(callback) {
-    onSnapshot(DOC_REF, (snap) => {
-      if (snap.exists()) callback(snap.data());
-    });
-  };
-  window.fbReady = true;
+    window.fbGetData = async function() {
+      const snap = await DOC_REF.get();
+      return snap.exists ? snap.data() : null;
+    };
+    window.fbSaveData = async function(data) {
+      await DOC_REF.set(data);
+    };
+    window.fbListen = function(callback) {
+      DOC_REF.onSnapshot(snap => {
+        if (snap.exists) callback(snap.data());
+      });
+    };
+    window.fbReady = true;
+    console.log('Firebase آماده است');
+  } catch(e) {
+    console.error('خطا در راه‌اندازی Firebase:', e);
+    window.fbReady = false;
+  }
 </script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap');
