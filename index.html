@@ -5,6 +5,47 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>سامانه نجم</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script type="module">
+  // ════════════════════════════════════════
+  //  FIREBASE — جایگزین کن با کلید خودت
+  // ════════════════════════════════════════
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // ════════════════════════════════════════
+  //  FIREBASE CONFIG
+  // ════════════════════════════════════════
+  const firebaseConfig = {
+    apiKey: "AIzaSyCvcGijAb7B-VJrGczlds4fyLUwSP6WmfQ",
+    authDomain: "najm06-49558.firebaseapp.com",
+    projectId: "najm06-49558",
+    storageBucket: "najm06-49558.firebasestorage.app",
+    messagingSenderId: "271642971140",
+    appId: "1:271642971140:web:ed92c0dcb3155fff197951",
+    measurementId: "G-NBFW41CZ1R"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const db = getFirestore(fbApp);
+  const DOC_REF = doc(db, "najm", "data"); // یک سند واحد برای کل داده‌های سامانه
+
+  // این توابع را در window می‌گذاریم تا کد اصلی پایین صفحه بتواند صدا بزند
+  window.fbGetData = async function() {
+    const snap = await getDoc(DOC_REF);
+    return snap.exists() ? snap.data() : null;
+  };
+  window.fbSaveData = async function(data) {
+    await setDoc(DOC_REF, data);
+  };
+  window.fbListen = function(callback) {
+    onSnapshot(DOC_REF, (snap) => {
+      if (snap.exists()) callback(snap.data());
+    });
+  };
+  window.fbReady = true;
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
@@ -246,6 +287,7 @@ label{display:block;margin-bottom:5px;color:var(--muted);font-size:13px;font-wei
     <div><div class="hdr-title">سامانه نجم</div><div class="hdr-sub">نرم‌افزار جامع متربیان</div></div>
     <div class="flex gap12">
       <span class="hdr-user" id="hdrUser"></span>
+      <button class="btn b-green btn-sm" onclick="exportD()" title="دانلود فایل پشتیبان">💾 ذخیره فایل</button>
       <button class="btn b-red btn-sm" onclick="doLogout()">خروج</button>
     </div>
   </div>
@@ -308,17 +350,89 @@ const DEF = {
 
 let D = null, U = null, R = null;
 const charts = {};
+let useFirebase = false;
+let isApplyingRemote = false; // جلوگیری از حلقه‌ی بی‌نهایت هنگام دریافت داده از سرور
 
-function loadD(){
+// ════════════════════════════════════════
+//  بارگذاری اولیه — ابتدا تلاش با Firebase، در غیر این صورت localStorage
+// ════════════════════════════════════════
+async function loadD(){
+  // به ماژول Firebase کمی فرصت بده تا لود شود (حداکثر ۱.۵ ثانیه)
+  for(let i=0; i<15 && !window.fbReady; i++){
+    await new Promise(r=>setTimeout(r,100));
+  }
+
+  if (window.fbReady) {
+    try{
+      const remote = await window.fbGetData();
+      if (remote) {
+        D = remote;
+        useFirebase = true;
+      } else {
+        // سند هنوز روی سرور نیست → داده پیش‌فرض را اول‌بار آپلود کن
+        D = JSON.parse(JSON.stringify(DEF));
+        await window.fbSaveData(D);
+        useFirebase = true;
+      }
+      // گوش‌دادن به تغییرات زنده از سایر کاربران
+      window.fbListen((remoteData)=>{
+        isApplyingRemote = true;
+        D = remoteData;
+        normalizeD();
+        // اگر کاربر لاگین است، رفرنس او را در داده تازه پیدا کن و صفحه را آپدیت کن
+        if (U && R) {
+          const maps={student:'students',teacher:'teachers',chief:'chiefs',admin:'admins'};
+          const fresh = (D[maps[R]]||[]).find(x=>x.id===U.id);
+          if (fresh) { U = fresh; render(); }
+          else { doLogout(); toast('حساب شما حذف شده است','er'); }
+        }
+        isApplyingRemote = false;
+      });
+      normalizeD();
+      return;
+    }catch(e){
+      console.warn('Firebase در دسترس نیست، استفاده از حافظه محلی:', e);
+      useFirebase = false;
+    }
+  }
+
+  // fallback: localStorage
   try{
     const s = localStorage.getItem(KEY);
     D = s ? JSON.parse(s) : null;
     if(!D){ D = JSON.parse(JSON.stringify(DEF)); saveD(); return; }
-    ['students','teachers','chiefs','admins','scoreLog','tScoreLog','notices','reminders','pvs']
-      .forEach(k=>{ if(!D[k]) D[k]=DEF[k]||[]; });
+    normalizeD();
   }catch(e){ D = JSON.parse(JSON.stringify(DEF)); }
 }
-function saveD(){ localStorage.setItem(KEY, JSON.stringify(D)); }
+
+function normalizeD(){
+  ['students','teachers','chiefs','admins','scoreLog','tScoreLog','notices','reminders','pvs']
+    .forEach(k=>{ if(!D[k]) D[k]=DEF[k]||[]; });
+}
+
+function saveD(){
+  // همیشه یک نسخه پشتیبان محلی هم نگه می‌داریم
+  localStorage.setItem(KEY, JSON.stringify(D));
+
+  if (useFirebase && !isApplyingRemote) {
+    window.fbSaveData(D).then(()=>{
+      flashSaveIndicator('✅ ذخیره و همگام‌سازی شد');
+    }).catch(err=>{
+      console.error('خطا در ذخیره روی سرور:', err);
+      flashSaveIndicator('⚠️ فقط محلی ذخیره شد', true);
+    });
+  } else {
+    flashSaveIndicator('✅ ذخیره شد (محلی)');
+  }
+}
+
+function flashSaveIndicator(msg, isWarn){
+  const btn=document.querySelector('.btn.b-green.btn-sm');
+  if(btn){
+    btn.textContent=msg;
+    setTimeout(()=>btn.textContent='💾 ذخیره فایل',1800);
+  }
+}
 
 // ════════════════════════════════════════
 //  AUTH
@@ -1375,7 +1489,18 @@ function mkChart(id,type,data,extra={}){
 // ════════════════════════════════════════
 el('overlay').addEventListener('click',e=>{if(e.target===e.currentTarget)closeM();});
 ['lUser','lPass'].forEach(id=>el(id).addEventListener('keypress',e=>{if(e.key==='Enter')doLogin();}));
-loadD();
+
+(async function start(){
+  const loginBtn = document.querySelector('.btn-login');
+  if(loginBtn){ loginBtn.disabled = true; loginBtn.textContent='در حال اتصال...'; }
+  await loadD();
+  if(loginBtn){ loginBtn.disabled = false; loginBtn.textContent='ورود به سامانه'; }
+  // نشانه وضعیت اتصال در صفحه ورود
+  const statusEl = document.createElement('p');
+  statusEl.style.cssText = 'text-align:center;font-size:11px;margin-top:14px;color:' + (useFirebase ? '#10b981' : '#f59e0b');
+  statusEl.textContent = useFirebase ? '🟢 متصل به سرور آنلاین (همگام‌سازی فعال)' : '🟡 حالت محلی (فقط همین دستگاه)';
+  document.querySelector('.login-box')?.appendChild(statusEl);
+})();
 </script>
 </body>
-</html>
+  </html>
