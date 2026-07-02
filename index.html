@@ -5,43 +5,50 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>سامانه نجم</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<!-- Firebase CDN (compat version - works in all browsers without module bundler) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-  const firebaseConfig = {
-    apiKey: "AIzaSyCvcGijAb7B-VJrGczlds4fyLUwSP6WmfQ",
-    authDomain: "najm06-49558.firebaseapp.com",
-    projectId: "najm06-49558",
-    storageBucket: "najm06-49558.firebasestorage.app",
-    messagingSenderId: "271642971140",
-    appId: "1:271642971140:web:ed92c0dcb3155fff197951",
-    measurementId: "G-NBFW41CZ1R"
-  };
+// ════════════════════════════════════════
+//  SUPABASE CONFIG (بدون VPN کار می‌کنه)
+// ════════════════════════════════════════
+const SB_URL = "https://zvyadigypkjgzrycihtn.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp2eWFkaWd5cGtqZ3pyeWNpaHRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5ODQyNzUsImV4cCI6MjA5ODU2MDI3NX0.3hee7AYcHBJs6HFF2jLSmfdgSphGoOlIUu5e_7Ld2oI";
 
+const sbHeaders = {
+  'Content-Type': 'application/json',
+  'apikey': SB_KEY,
+  'Authorization': 'Bearer ' + SB_KEY,
+  'Prefer': 'return=minimal'
+};
+
+async function sbGet() {
   try {
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-    const DOC_REF = db.collection("najm").doc("data");
+    const r = await fetch(SB_URL + '/rest/v1/najm_data?id=eq.main&select=data', { headers: sbHeaders });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return rows.length ? rows[0].data : null;
+  } catch(e) { return null; }
+}
 
-    window.fbGetData = async function() {
-      const snap = await DOC_REF.get();
-      return snap.exists ? snap.data() : null;
-    };
-    window.fbSaveData = async function(data) {
-      await DOC_REF.set(data);
-    };
-    window.fbListen = function(callback) {
-      DOC_REF.onSnapshot(snap => {
-        if (snap.exists) callback(snap.data());
-      });
-    };
-    window.fbReady = true;
-    console.log('Firebase آماده است');
-  } catch(e) {
-    console.error('خطا در راه‌اندازی Firebase:', e);
-    window.fbReady = false;
-  }
+async function sbSave(data) {
+  try {
+    await fetch(SB_URL + '/rest/v1/najm_data', {
+      method: 'POST',
+      headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ id: 'main', data, updated_at: new Date().toISOString() })
+    });
+  } catch(e) { console.error('sbSave error:', e); }
+}
+
+// polling هر ۵ ثانیه برای دریافت تغییرات زنده
+let sbPollTimer = null;
+let sbLastHash = '';
+function sbListen(callback) {
+  sbPollTimer = setInterval(async () => {
+    const remote = await sbGet();
+    if (!remote) return;
+    const h = JSON.stringify(remote).length + '';
+    if (h !== sbLastHash) { sbLastHash = h; callback(remote); }
+  }, 5000);
+}
 </script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap');
@@ -347,88 +354,88 @@ const DEF = {
 
 let D = null, U = null, R = null;
 const charts = {};
-let useFirebase = false;
-let isApplyingRemote = false; // جلوگیری از حلقه‌ی بی‌نهایت هنگام دریافت داده از سرور
+let isSyncing = false;
 
-// ════════════════════════════════════════
-//  بارگذاری اولیه — ابتدا تلاش با Firebase، در غیر این صورت localStorage
-// ════════════════════════════════════════
 async function loadD(){
-  // به ماژول Firebase کمی فرصت بده تا لود شود (حداکثر ۱.۵ ثانیه)
-  for(let i=0; i<15 && !window.fbReady; i++){
-    await new Promise(r=>setTimeout(r,100));
-  }
+  // نشون بده داریم وصل می‌شیم
+  const btn = document.querySelector('.btn-login');
+  if(btn){ btn.disabled=true; btn.textContent='در حال اتصال...'; }
 
-  if (window.fbReady) {
-    try{
-      const remote = await window.fbGetData();
-      if (remote) {
-        D = remote;
-        useFirebase = true;
-      } else {
-        // سند هنوز روی سرور نیست → داده پیش‌فرض را اول‌بار آپلود کن
-        D = JSON.parse(JSON.stringify(DEF));
-        await window.fbSaveData(D);
-        useFirebase = true;
-      }
-      // گوش‌دادن به تغییرات زنده از سایر کاربران
-      window.fbListen((remoteData)=>{
-        isApplyingRemote = true;
+  try {
+    const remote = await sbGet();
+    if(remote){
+      D = remote;
+      normalizeD();
+      // شروع polling برای همگام‌سازی زنده
+      sbListen((remoteData)=>{
+        if(isSyncing) return;
         D = remoteData;
         normalizeD();
-        // اگر کاربر لاگین است، رفرنس او را در داده تازه پیدا کن و صفحه را آپدیت کن
-        if (U && R) {
+        if(U && R){
           const maps={student:'students',teacher:'teachers',chief:'chiefs',admin:'admins'};
-          const fresh = (D[maps[R]]||[]).find(x=>x.id===U.id);
-          if (fresh) { U = fresh; render(); }
-          else { doLogout(); toast('حساب شما حذف شده است','er'); }
+          const fresh=(D[maps[R]]||[]).find(x=>x.id===U.id);
+          if(fresh){ U=fresh; render(); }
         }
-        isApplyingRemote = false;
       });
-      normalizeD();
-      return;
-    }catch(e){
-      console.warn('Firebase در دسترس نیست، استفاده از حافظه محلی:', e);
-      useFirebase = false;
+      showStatus(true);
+    } else {
+      // اولین بار — داده پیش‌فرض رو آپلود کن
+      D = JSON.parse(JSON.stringify(DEF));
+      await sbSave(D);
+      showStatus(true);
+      sbListen((remoteData)=>{
+        if(isSyncing) return;
+        D = remoteData; normalizeD();
+        if(U && R){ const maps={student:'students',teacher:'teachers',chief:'chiefs',admin:'admins'}; const fresh=(D[maps[R]]||[]).find(x=>x.id===U.id); if(fresh){U=fresh;render();} }
+      });
     }
+  } catch(e) {
+    // fallback به localStorage
+    console.warn('Supabase error, using localStorage:', e);
+    const s = localStorage.getItem('najm_v3');
+    D = s ? JSON.parse(s) : JSON.parse(JSON.stringify(DEF));
+    normalizeD();
+    showStatus(false);
   }
 
-  // fallback: localStorage
-  try{
-    const s = localStorage.getItem(KEY);
-    D = s ? JSON.parse(s) : null;
-    if(!D){ D = JSON.parse(JSON.stringify(DEF)); saveD(); return; }
-    normalizeD();
-  }catch(e){ D = JSON.parse(JSON.stringify(DEF)); }
+  if(btn){ btn.disabled=false; btn.textContent='ورود به سامانه'; }
 }
 
 function normalizeD(){
+  if(!D) D = JSON.parse(JSON.stringify(DEF));
   ['students','teachers','chiefs','admins','scoreLog','tScoreLog','notices','reminders','pvs']
     .forEach(k=>{ if(!D[k]) D[k]=DEF[k]||[]; });
 }
 
 function saveD(){
-  // همیشه یک نسخه پشتیبان محلی هم نگه می‌داریم
-  localStorage.setItem(KEY, JSON.stringify(D));
-
-  if (useFirebase && !isApplyingRemote) {
-    window.fbSaveData(D).then(()=>{
-      flashSaveIndicator('✅ ذخیره و همگام‌سازی شد');
-    }).catch(err=>{
-      console.error('خطا در ذخیره روی سرور:', err);
-      flashSaveIndicator('⚠️ فقط محلی ذخیره شد', true);
-    });
-  } else {
-    flashSaveIndicator('✅ ذخیره شد (محلی)');
-  }
+  // همیشه localStorage هم ذخیره کن
+  localStorage.setItem('najm_v3', JSON.stringify(D));
+  // ذخیره روی Supabase
+  isSyncing = true;
+  sbSave(D).then(()=>{
+    isSyncing = false;
+    flashBtn('✅ همگام شد');
+  }).catch(()=>{
+    isSyncing = false;
+    flashBtn('⚠️ فقط محلی');
+  });
 }
 
-function flashSaveIndicator(msg, isWarn){
-  const btn=document.querySelector('.btn.b-green.btn-sm');
-  if(btn){
-    btn.textContent=msg;
-    setTimeout(()=>btn.textContent='💾 ذخیره فایل',1800);
-  }
+function showStatus(online){
+  const box = document.querySelector('.login-box');
+  if(!box) return;
+  const old = document.getElementById('connStatus');
+  if(old) old.remove();
+  const p = document.createElement('p');
+  p.id = 'connStatus';
+  p.style.cssText = 'text-align:center;font-size:12px;margin-top:12px;color:'+(online?'#10b981':'#f59e0b');
+  p.textContent = online ? '🟢 متصل به سرور — همگام‌سازی فعال' : '🟡 حالت محلی (فقط همین دستگاه)';
+  box.appendChild(p);
+}
+
+function flashBtn(msg){
+  const btn = document.querySelector('.btn.b-green.btn-sm');
+  if(btn){ btn.textContent=msg; setTimeout(()=>btn.textContent='💾 ذخیره فایل',2000); }
 }
 
 // ════════════════════════════════════════
@@ -1486,18 +1493,7 @@ function mkChart(id,type,data,extra={}){
 // ════════════════════════════════════════
 el('overlay').addEventListener('click',e=>{if(e.target===e.currentTarget)closeM();});
 ['lUser','lPass'].forEach(id=>el(id).addEventListener('keypress',e=>{if(e.key==='Enter')doLogin();}));
-
-(async function start(){
-  const loginBtn = document.querySelector('.btn-login');
-  if(loginBtn){ loginBtn.disabled = true; loginBtn.textContent='در حال اتصال...'; }
-  await loadD();
-  if(loginBtn){ loginBtn.disabled = false; loginBtn.textContent='ورود به سامانه'; }
-  // نشانه وضعیت اتصال در صفحه ورود
-  const statusEl = document.createElement('p');
-  statusEl.style.cssText = 'text-align:center;font-size:11px;margin-top:14px;color:' + (useFirebase ? '#10b981' : '#f59e0b');
-  statusEl.textContent = useFirebase ? '🟢 متصل به سرور آنلاین (همگام‌سازی فعال)' : '🟡 حالت محلی (فقط همین دستگاه)';
-  document.querySelector('.login-box')?.appendChild(statusEl);
-})();
+loadD();
 </script>
 </body>
 </html>
